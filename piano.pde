@@ -12,6 +12,7 @@
 #include "avr/pgmspace.h"
 
 // table of 256 sine values / one sine period / stored in flash memory
+
 PROGMEM  prog_uchar sine256[]  = {
   127,130,133,136,139,143,146,149,152,155,158,161,164,167,170,173,176,178,181,184,187,190,192,195,198,200,203,205,208,210,212,215,217,219,221,223,225,227,229,231,233,234,236,238,239,240,
   242,243,244,245,247,248,249,249,250,251,252,252,253,253,253,254,254,254,254,254,254,254,253,253,253,252,252,251,250,249,249,248,247,245,244,243,242,240,239,238,236,234,233,231,229,227,225,223,
@@ -20,25 +21,44 @@ PROGMEM  prog_uchar sine256[]  = {
   33,35,37,39,42,44,46,49,51,54,56,59,62,64,67,70,73,76,78,81,84,87,90,93,96,99,102,105,108,111,115,118,121,124
 
 };
+
+// The following two tables map Input pins to corresponding musical notes.
+//
+// index =  0 -> note[0] => input pin 2
+//               freq[0] => 220.0 Hz    A 
+// index =  1 -> note[1] => input pin 3
+//               freq[1] => 233.0 Hz    A#
+
+// Table of notes that the device can play.
+
 double freq[] = { 220.0, 233.0, 247.0, 260.0, 276.0, 292.0,
-                  310.0, 328.0, 348.0, 368.0, 391.0, 414.0, 440.0, 480.0, 20.0 };
+                  310.0, 328.0, 348.0, 368.0, 391.0, 414.0, 440.0, 480.0, 520.0 };
+
+// Table of input pin assignments (the first ten are digital Inputs, skipping over 11)
+// and the last three ( note[10-12] are the Analog Inputs!
+
 int    note[] = { 2,3,4,5,6,7,8,9,10,12,0,1,2 };
+
 #define cbi(sfr, bit) (_SFR_BYTE(sfr) &= ~_BV(bit))
 #define sbi(sfr, bit) (_SFR_BYTE(sfr) |= _BV(bit))
 
 int ledPin = 13;                 // LED pin 7
 byte bb;
 
-double dfreq;
+double dfreq[5] = { 220.0, 276.0, 328.0, 414.0, 0.0}; // Maj7th chord
+
 // const double refclk=31372.549;  // =16MHz / 510
 const double refclk=31376.6;      // measured
 
-// variables used inside interrupt service declared as voilatile
+// Variables used inside interrupt service declared as volatile
+
 volatile byte icnt;              // var inside interrupt
 volatile byte icnt1;             // var inside interrupt
 volatile byte c4ms;              // counter incremented all 4ms
-volatile unsigned long phaccu;   // pahse accumulator
-volatile unsigned long tword_m;  // dds tuning word m
+volatile unsigned int numnotes;
+volatile unsigned long phaccu[5];   // phase accumulators
+volatile unsigned long tword_m[5];  // dds tuning words m
+volatile unsigned long tword_t[5];  // temp storage
 
 void setup()
 {
@@ -53,47 +73,77 @@ void setup()
   // disable interrupts to avoid timing distortion
   cbi (TIMSK0,TOIE0);              // disable Timer0 !!! delay() is now not available
   sbi (TIMSK2,TOIE2);              // enable Timer2 Interrupt
-
-  dfreq=1000.0;                    // initial output frequency = 1000.o Hz
-  tword_m=pow(2,32)*dfreq/refclk;  // calulate DDS new tuning word 
-
+  
+  numnotes = 4;                    // Currently can play four notes at once
+  for(byte i=0; i < numnotes; i++)
+  {
+       tword_m[i] = pow(2,32)*dfreq[i]/refclk;  // calulate DDS new tuning words
+  }
+  
 }
+
 void loop()
 {
+  byte i;
   while(1) {
      if (c4ms > 100) {                 // timer / wait a full second
       c4ms=0;
-      dfreq = 207.7;            // default output frequency = 1000.0 Hz
-      for (int i=0;i<10;i++)
+      unsigned int newnotes = 0;
+      byte change = 0;
+      for (i=0;i<10;i++)
       {
         if (digitalRead(note[i]))
         {
-                dfreq = freq[i];
-                break;
+                if (freq[i] != dfreq[newnotes]) { change = 1; }
+                dfreq[newnotes++] = freq[i];
         }
       }
-      for (int i=10;i<13;i++)
+      for (i=10;i<13;i++)
       {
         if (analogRead(note[i]) > 200)
         {
-                dfreq = freq[i];
-                break;
+                if (freq[i] != dfreq[newnotes]) { change = 1; }
+                dfreq[newnotes++] = freq[i];
         }
       }
-      cbi (TIMSK2,TOIE2);              // disble Timer2 Interrupt
-      tword_m=pow(2,32)*dfreq/refclk;  // calulate DDS new tuning word
-      sbi (TIMSK2,TOIE2);              // enable Timer2 Interrupt 
+      
+       /*
+       * To avoid producing a click every time we check the inputs, we
+       * update the interrupt routine data only when a note has changed.
+       */
 
-      Serial.print(dfreq);
-      Serial.print("  ");
-      Serial.println(tword_m);
+      if (change)
+      {     
+        Serial.print(newnotes);
+        Serial.println("  notes");
+        numnotes = min(newnotes,4);
+        for(i=0;i<numnotes;i++)
+        {
+         tword_t[i] = pow(2,32)*dfreq[i]/refclk;  // calulate DDS new tuning words
+        }
+        cbi (TIMSK2,TOIE2);              // disble Timer2 Interrupt
+        for(i=0;i<numnotes;i++)
+        {
+         tword_m[i] = tword_t[i];
+        }
+        sbi (TIMSK2,TOIE2);              // enable Timer2 Interrupt 
+        Serial.print(numnotes);
+        Serial.println("  notes");
+      }
+      else
+      {
+        Serial.print("."); // Idling, no notes are changing
+      }
     }
   }
  }
+
 //******************************************************************
 // timer2 setup
 // set prscaler to 1, PWM mode to phase correct PWM,  16000000/510 = 31372.55 Hz clock
-void Setup_timer2() {
+
+void Setup_timer2()
+{
 
 // Timer2 Clock Prescaler to : 1
   sbi (TCCR2B, CS20);
@@ -109,22 +159,28 @@ void Setup_timer2() {
   cbi (TCCR2B, WGM22);
 }
 
-//******************************************************************
+
+//*****************************************************
 // Timer2 Interrupt Service at 31372,550 KHz = 32uSec
 // this is the timebase REFCLOCK for the DDS generator
 // FOUT = (M (REFCLK)) / (2 exp 32)
 // runtime : 8 microseconds ( inclusive push and pop)
-ISR(TIMER2_OVF_vect) {
 
-  sbi(PORTD,7);          // Test / set PORTD,7 high to observe timing with a oscope
-
-  phaccu=phaccu+tword_m; // soft DDS, phase accu with 32 bits
-  icnt=phaccu >> 24;     // use upper 8 bits for phase accu as frequency information
-                         // read value fron ROM sine table and send to PWM DAC
-  OCR2A=pgm_read_byte_near(sine256 + icnt);    
-
-  if(icnt1++ == 125) {  // increment variable c4ms all 4 milliseconds
+ISR(TIMER2_OVF_vect)
+{
+  unsigned long mix = 0;
+  byte i;
+  for(i=0; i<numnotes; i++)
+    {
+      phaccu[i] = phaccu[i] + tword_m[i]; // soft DDS, phase accu with 32 bits
+      icnt = phaccu[i] >> 24;     // use upper 8 bits for phase accu as frequency information
+      mix += pgm_read_byte_near(sine256 + icnt); // read value fron ROM sine table
+    }
+    OCR2A = (mix)/numnotes+1;    // send scaled value to PWM DAC
+   
+  if(icnt1++ == 100) {  // (was 125) increment variable c4ms all 4 milliseconds
     c4ms++;
     icnt1=0;
    }
 }
+
