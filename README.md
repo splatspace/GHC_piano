@@ -10,9 +10,9 @@ to GHC_piano/GHC_piano.pde
 
 Now it is possible to say:
 
-  $ git clone git@github.com:splatspace/GHC_piano.git
-  $ arduino
-     ... and open the sketch "GHC_piano/GHC_piano.pde"
+	$ git clone git@github.com:splatspace/GHC_piano.git
+	$ arduino
+	     ... and open the sketch "GHC_piano/GHC_piano.pde"
 
 -----------------------------------------------
 
