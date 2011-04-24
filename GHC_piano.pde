@@ -76,9 +76,9 @@ volatile unsigned long current;
 volatile unsigned long previous;
 volatile unsigned long notes;
 
-volatile unsigned long phaccu[5];   // phase accumulators
-volatile unsigned long tword_m[5];  // dds tuning words m
-volatile unsigned long tword_t[5];  // temp storage
+volatile unsigned long phaccu[12];   // phase accumulators
+volatile unsigned long tword_m[12];  // dds tuning words m
+volatile unsigned long tword_t[12];  // temp storage
 volatile unsigned long attack[16];
 volatile unsigned long decay[16];
 
