@@ -6,9 +6,8 @@
  */
 
 #include "avr/pgmspace.h"
-
-#define SLOW_ATTACK  B00000100 // fast is default
-#define SLOW_DECAY   B00001000 // fast is default
+#define SLOW_ATTACK  0x10
+#define SLOW_DECAY   0x20
 
 // 256 element flash memory array of one sinewave cycle
 
@@ -31,6 +30,20 @@ PROGMEM  prog_uchar sine256[]  = {
    78, 81, 84, 87, 90, 93, 96, 99, 102,105,108,111,115,118,121,124  //
 };
 
+/*
+ * These numbers are multipliers (shift amounts)
+ * to control dynamics.
+ */
+
+PROGMEM  prog_uchar fast_attack[] = {  0,1,1,1,1,2,2,2,2,3,3,3,4,4,2,1 };
+PROGMEM  prog_uchar slow_attack[] = {  0,1,1,2,2,3,3,3,3,3,2,2,2,1,1,1 };
+PROGMEM  prog_uchar fast_decay[]  = {  7,7,7,7,6,6,5,5,4,4,3,3,2,2,1,1 };
+PROGMEM  prog_uchar slow_decay[]  = {  7,6,6,5,5,5,4,4,4,3,3,3,2,2,1,1 };
+
+#define  ENV 15
+int env[] = {  0,0,0,0,0,0,0,0,0,0,0,0,0 };
+
+
 // The following two tables map Input pins to corresponding musical notes.
 //
 // index =  0 -> note[0] => input pin 2
@@ -43,18 +56,9 @@ PROGMEM  prog_uchar sine256[]  = {
 double freq[] = { 220.0, 233.0, 247.0, 260.0, 276.0, 292.0,
                   310.0, 328.0, 348.0, 368.0, 391.0, 414.0, 440.0, 480.0, 520.0 };
 
-int previous;
-int current;
-
-// Table of input pin assignments (the first ten are digital Inputs, skipping over 11)
-// and the last three ( note[10-12] are the Analog Inputs!
-
-int    note[] = { 2,3,4,5,6,7,8,9,10,12,0,1 };
-
 #define cbi(sfr, bit) (_SFR_BYTE(sfr) &= ~_BV(bit))
 #define sbi(sfr, bit) (_SFR_BYTE(sfr) |= _BV(bit))
 
-int ledPin = 13;                 // LED pin 7
 byte bb;
 
 double dfreq[5] = { 220.0, 276.0, 328.0, 414.0, 0.0}; // Maj7th chord
@@ -67,76 +71,88 @@ const double refclk=31376.6;      // measured
 volatile byte icnt;              // var inside interrupt
 volatile byte icnt1;             // var inside interrupt
 volatile byte c4ms;              // counter incremented all 4ms
-volatile unsigned int numnotes;
+
+volatile unsigned long current;
+volatile unsigned long previous;
+volatile unsigned long notes;
+
 volatile unsigned long phaccu[5];   // phase accumulators
 volatile unsigned long tword_m[5];  // dds tuning words m
 volatile unsigned long tword_t[5];  // temp storage
-volatile int parameters;
+volatile unsigned long attack[16];
+volatile unsigned long decay[16];
+
+// Table of input pin assignments:
+//  The first ten are digital Inputs, skipping over 11
+//  The last two, note[10-11] are analog inputs
+int    note[] = { 2,3,4,5,6,7,8,9,10,12,0,1 };
 
 void setup()
 {
-  pinMode(ledPin, OUTPUT);      // sets the digital pin as output
-  Serial.begin(115200);        // connect to the serial port
+  pinMode(13, OUTPUT);        // sets the digital pin as output
+  Serial.begin(115200);       // connect to the serial port
+  Serial.println("GHC");
 
-  pinMode(11, OUTPUT);     // pin11= PWM  output / frequency output
-
-  for (int i=0;i<10;i++) {
+  for(byte i=0;i<10;i++)
+  {
 	pinMode(note[i], INPUT);
-	digitalWrite(note[i],HIGH);
+	digitalWrite(note[i], HIGH);
   }
-  delay(500);
-  parameters = readValue();
-  printParameters(parameters);
-
 
   Setup_timer2();
 
   // disable interrupts to avoid timing distortion
-  cbi (TIMSK0,TOIE0);              // disable Timer0 !!! delay() is now not available
+  // disable Timer0 !!! delay() is now not available
+  cbi (TIMSK0,TOIE0);  
+
+  delay(300);
+  int parameters = getValue();
+  printParameters(parameters);
+
+  for(byte i=0;i<16;i++)
+    {
+      if ( parameters & SLOW_ATTACK) { attack[i] = slow_attack[i]; }
+      else                           { attack[i] = fast_attack[i]; }
+      if ( parameters & SLOW_DECAY)  { decay[i] = slow_decay[i];   }
+      else                           { decay[i] = fast_decay[i];   }
+    }
+
   sbi (TIMSK2,TOIE2);              // enable Timer2 Interrupt
-  
-  numnotes = 4;                    // Currently can play four notes at once
-  for(byte i=0; i < numnotes; i++)
-  {
-       tword_m[i] = pow(2,32)*dfreq[i]/refclk;  // calulate DDS new tuning words
-  }
-  
 }
 
-int readValue()
+int getValue()
 {
+unsigned int value = 0;
 byte i;
-int value = 0;
-
-     for (i=0;i<10;i++)
+      for (i=0; i<10; i++)
       {
         if (digitalRead(note[i]))
         {
-		value = value |(1<<i);
+		value |= 1<<i;
         }
       }
-      for (i=10;i<12;i++)
+     for (i=10; i<12; i++)
       {
         if (analogRead(note[i]) > 200)
         {
-		value = value |(1<<i);
+		value |= 1<<i;
         }
       }
-      return value;
+     return value;
 }
 
 void printParameters(int p)
 {
-	if ((p&3)==0) Serial.print("Major key ");
-	if ((p&3)==1) Serial.print("minor key ");
-	if ((p&3)==2) Serial.print("Harmonic minor ");
-	if ((p&3)==3) Serial.print("Melodic minor ");
-	if ((p>>2)&1)  Serial.print("slow attack ");
-	else           Serial.print("fast attack ");
-	if ((p>>3)&1)  Serial.print("slow decay ");
-	else           Serial.print("fast decay ");
-	if ((p>>4)&1)  Serial.print("vibrato ");
-	if ((p>>5)&1)  Serial.print("tremolo ");
+if ((p&3)==0) Serial.print("Major key ");
+if ((p&3)==1) Serial.print("minor key ");
+if ((p&3)==2) Serial.print("Harmonic minor ");
+if ((p&3)==3) Serial.print("Melodic minor ");
+if ((p>>2)&1) Serial.print("slow attack ");
+else Serial.print("fast attack ");
+if ((p>>3)&1) Serial.print("slow decay ");
+else Serial.print("fast decay ");
+if ((p>>4)&1) Serial.print("vibrato ");
+if ((p>>5)&1) Serial.print("tremolo ");
 Serial.println("");
 
 }
@@ -145,49 +161,37 @@ void loop()
 {
   byte i;
   while(1) {
-     if (c4ms > 50) {                 // 50 * 4ms = .1 second 
+     if (c4ms > 100) {                 // timer / wait a full second
       c4ms=0;
-      unsigned int newnotes = 0;
-      current = readValue();
-      
+      current = getValue();
+
        /*
        * To avoid producing a click every time we check the inputs, we
        * update the interrupt routine data only when a note has changed.
        */
 
       if (current != previous)
-      { 
-	previous = current;
-	for(i=0;i<12;i++) 
-	{
-		if ( current & (1<<i) ) { Serial.print(" 1"); }
-		else			{ Serial.print(" 0"); }
-	}
-	Serial.println("");
-/*
-        for(i=0;i<numnotes;i++)
+      {
+        previous = current;
+        for(i=0;i<12;i++)
         {
          tword_t[i] = pow(2,32)*dfreq[i]/refclk;  // calulate DDS new tuning words
         }
         cbi (TIMSK2,TOIE2);              // disble Timer2 Interrupt
-        for(i=0;i<numnotes;i++)
-        {
-         tword_m[i] = tword_t[i];
+        for(i=0;i<12;i++)
+	{
+	    tword_m[i] = tword_t[i];
         }
         sbi (TIMSK2,TOIE2);              // enable Timer2 Interrupt 
-*/
-      }
-      else
-      {
-//        Serial.print("."); // Idling, no notes are changing
       }
     }
   }
  }
 
-//******************************************************************
-// timer2 setup
-// set prscaler to 1, PWM mode to phase correct PWM,  16000000/510 = 31372.55 Hz clock
+/*
+ * timer2 setup
+ * prescaler to 1, PWM mode to phase correct PWM, 16000000/510 = 31372.55 Hz clock
+ */
 
 void Setup_timer2()
 {
@@ -216,18 +220,33 @@ void Setup_timer2()
 ISR(TIMER2_OVF_vect)
 {
   unsigned long mix = 0;
-  byte i;
-  for(i=0; i<numnotes; i++)
+  byte i = 0;
+  unsigned int div = 1;
+  notes = current;
+  for (byte i=0; i<12; i++)
     {
-      phaccu[i] = phaccu[i] + tword_m[i]; // soft DDS, phase accu with 32 bits
-      icnt = phaccu[i] >> 24;     // use upper 8 bits for phase accu as frequency information
-      mix += pgm_read_byte_near(sine256 + icnt); // read value fron ROM sine table
-    }
-    OCR2A = (mix)/numnotes+1;    // send scaled value to PWM DAC
-   
-  if(icnt1++ == 100) {  // (was 125) increment variable c4ms all 4 milliseconds
-    c4ms++;
-    icnt1=0;
-   }
-}
+      phaccu[i] = phaccu[i] + tword_m[i]; // soft DDS, 32-bit phase info
+      icnt = phaccu[i] >> 24;             // upper 8 bits of  phase 
 
+      // read value fron ROM sine table and scale
+      if (notes&1)
+	{
+	  mix += pgm_read_byte_near(sine256 + icnt) << attack[env[i]];
+	  if (env[i]>1) { div += env[i]; }
+	}
+	else
+	{
+	  mix += pgm_read_byte_near(sine256 + icnt) >> decay[env[i]];
+	  if (decay[env[i]]<2) { div++; }
+	}
+	if (env[i]) { env[i]--; } // Don't decrement below zero
+	notes = notes>>1;
+    }
+    OCR2A = mix/div;      // send scaled value to PWM DAC
+   
+    if( icnt1++ == 100)   // (was 125) increment variable c4ms all 4ms?
+      {
+	c4ms++;
+	icnt1=0;
+      }
+}
