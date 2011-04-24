@@ -7,6 +7,9 @@
 
 #include "avr/pgmspace.h"
 
+#define SLOW_ATTACK  B00000100 // fast is default
+#define SLOW_DECAY   B00001000 // fast is default
+
 // 256 element flash memory array of one sinewave cycle
 
 PROGMEM  prog_uchar sine256[]  = {
@@ -40,10 +43,13 @@ PROGMEM  prog_uchar sine256[]  = {
 double freq[] = { 220.0, 233.0, 247.0, 260.0, 276.0, 292.0,
                   310.0, 328.0, 348.0, 368.0, 391.0, 414.0, 440.0, 480.0, 520.0 };
 
+int previous;
+int current;
+
 // Table of input pin assignments (the first ten are digital Inputs, skipping over 11)
 // and the last three ( note[10-12] are the Analog Inputs!
 
-int    note[] = { 2,3,4,5,6,7,8,9,10,12,0,1,2 };
+int    note[] = { 2,3,4,5,6,7,8,9,10,12,0,1 };
 
 #define cbi(sfr, bit) (_SFR_BYTE(sfr) &= ~_BV(bit))
 #define sbi(sfr, bit) (_SFR_BYTE(sfr) |= _BV(bit))
@@ -65,14 +71,23 @@ volatile unsigned int numnotes;
 volatile unsigned long phaccu[5];   // phase accumulators
 volatile unsigned long tword_m[5];  // dds tuning words m
 volatile unsigned long tword_t[5];  // temp storage
+volatile int parameters;
 
 void setup()
 {
   pinMode(ledPin, OUTPUT);      // sets the digital pin as output
   Serial.begin(115200);        // connect to the serial port
-  Serial.println("DDS Test");
 
   pinMode(11, OUTPUT);     // pin11= PWM  output / frequency output
+
+  for (int i=0;i<10;i++) {
+	pinMode(note[i], INPUT);
+	digitalWrite(note[i],HIGH);
+  }
+  delay(500);
+  parameters = readValue();
+  printParameters(parameters);
+
 
   Setup_timer2();
 
@@ -88,41 +103,68 @@ void setup()
   
 }
 
+int readValue()
+{
+byte i;
+int value = 0;
+
+     for (i=0;i<10;i++)
+      {
+        if (digitalRead(note[i]))
+        {
+		value = value |(1<<i);
+        }
+      }
+      for (i=10;i<12;i++)
+      {
+        if (analogRead(note[i]) > 200)
+        {
+		value = value |(1<<i);
+        }
+      }
+      return value;
+}
+
+void printParameters(int p)
+{
+	if ((p&3)==0) Serial.print("Major key ");
+	if ((p&3)==1) Serial.print("minor key ");
+	if ((p&3)==2) Serial.print("Harmonic minor ");
+	if ((p&3)==3) Serial.print("Melodic minor ");
+	if ((p>>2)&1)  Serial.print("slow attack ");
+	else           Serial.print("fast attack ");
+	if ((p>>3)&1)  Serial.print("slow decay ");
+	else           Serial.print("fast decay ");
+	if ((p>>4)&1)  Serial.print("vibrato ");
+	if ((p>>5)&1)  Serial.print("tremolo ");
+Serial.println("");
+
+}
+
 void loop()
 {
   byte i;
   while(1) {
-     if (c4ms > 100) {                 // timer / wait a full second
+     if (c4ms > 50) {                 // 50 * 4ms = .1 second 
       c4ms=0;
       unsigned int newnotes = 0;
-      byte change = 0;
-      for (i=0;i<10;i++)
-      {
-        if (digitalRead(note[i]))
-        {
-                if (freq[i] != dfreq[newnotes]) { change = 1; }
-                dfreq[newnotes++] = freq[i];
-        }
-      }
-      for (i=10;i<13;i++)
-      {
-        if (analogRead(note[i]) > 200)
-        {
-                if (freq[i] != dfreq[newnotes]) { change = 1; }
-                dfreq[newnotes++] = freq[i];
-        }
-      }
+      current = readValue();
       
        /*
        * To avoid producing a click every time we check the inputs, we
        * update the interrupt routine data only when a note has changed.
        */
 
-      if (change)
-      {     
-        Serial.print(newnotes);
-        Serial.println("  notes");
-        numnotes = min(newnotes,4);
+      if (current != previous)
+      { 
+	previous = current;
+	for(i=0;i<12;i++) 
+	{
+		if ( current & (1<<i) ) { Serial.print(" 1"); }
+		else			{ Serial.print(" 0"); }
+	}
+	Serial.println("");
+/*
         for(i=0;i<numnotes;i++)
         {
          tword_t[i] = pow(2,32)*dfreq[i]/refclk;  // calulate DDS new tuning words
@@ -133,12 +175,11 @@ void loop()
          tword_m[i] = tword_t[i];
         }
         sbi (TIMSK2,TOIE2);              // enable Timer2 Interrupt 
-        Serial.print(numnotes);
-        Serial.println("  notes");
+*/
       }
       else
       {
-        Serial.print("."); // Idling, no notes are changing
+//        Serial.print("."); // Idling, no notes are changing
       }
     }
   }
