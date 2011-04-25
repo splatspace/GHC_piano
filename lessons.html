@@ -60,14 +60,18 @@ a small ice cream cone is less ice cream than a medium cone
 a medium cone is less than a large cone.
 </i></b>
 
-Or: zero is less than 1 which is less than 2 which is less than 3.
+Or: zero is less than one which is less than two which is less than three.
 
 <b>     0   <   1   <   2   <   3</b>
+
+But we are using binary numbers now, so this is:
+
+<b>     0   <   1   <   10   <   11</b>
 </pre>
 <p>
 So we can have four different choices with two bits, but we
 need at least five to select the ice cream flavor.  So let's
-add another bit.
+add another bit.  With three bits we can count:
 <pre>
     0     zero
     1     one
@@ -88,7 +92,7 @@ Computer Scientists have very good reasons for counting this
 way, really. They're not just doing it to confuse other people.
 Zero can be very important number.
 <p>
-So our Binary Encoding of the five ice-cream flavors is:
+So our Binary Encoding of the five ice-cream flavors could be:
 <pre>
     0     zero      vanilla
     1     one       chocolate
