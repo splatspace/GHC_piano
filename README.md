@@ -1,5 +1,12 @@
 # Piano Player
 
+Sunday, April 24th Peter updated the code for single-note play.
+Multiple notes will play, but their amplitudes will be added without
+proper normalization, so there is distortion and intermodulation.
+
+Monday April 25th Peter added a draft of a lesson plan on Binary encoding.
+
+
 ---------------------  NAME CHANGE EXPLANATION  ---
 
 Arduino (Processing) Development Environment requires the main
