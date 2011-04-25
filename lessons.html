@@ -84,8 +84,9 @@ that is eight different binary codes. Remember, if you start
 counting with zero and count up to seven, you get 
 [0,1,2,3,4,5,6,7] which is eight different numbers.
 
-Computer Scientists have a very good reason for counting this
+Computer Scientists have very good reasons for counting this
 way, really. They're not just doing it to confuse other people.
+Zero can be very important number.
 <p>
 So our Binary Encoding of the five ice-cream flavors is:
 <pre>
@@ -132,24 +133,21 @@ in the world.  Those who understand
 the binary code and those who don't.
 </b>
 </pre>
-That 10 sure looks like it could be the number 10, but
+That 10 sure looks like it could be the number ten, but
 now that you are one of the people that understands
 the binary code, you can get the joke and realize
 that the T-shirt really says:
 <pre>
-"There are two kinds of people
-in the world. Those who understand
-the binary code and those who don't"
+<center>
+"There are two kinds of people in the world.
+Those who understand the binary code and those who don't."
+</center>
 </pre>
 <p>
 Every one else will still be scratching their heads over
 what they <i>think</i> says: "There are ten kinds of people..."
 <h3>Binary Encoding</h3>
 How is this used in the Piano Roll Reader?
-When you first turn the Piano on (or whenever you
-press the reset button). The first thing it does
-is look at the 12 spaces under the reader to see
-if there are any black areas.
 <p>
 We want the piano to be able to play lots of different
 scales. Major, minor, harmonic minor, melodic minor, 
@@ -158,16 +156,25 @@ spaces as a binary code we can tell the Piano which
 scale to use by setting it down over a particular
 pattern of black and white squares.  
 <p>
-Using white areas for 0 and black for 1:
+When you first turn the Piano on (or when you press
+the <b><i>Reset</i></b> button). The first thing it does
+is look at the 12 spaces under the reader to see
+which spaces are black or white.
+<p>
+If the white areas represent 0 and the black ones 1...
 <center>
 <img src="initialize.png" width=600>
 </center>
 <p>
-If the first three spaces have no black markers then
-the piano are
+That pattern to the far left is telling the Piano that
+we want to use the Harmonic Minor Scale (choice 010),
+A slow attack (1) and fast decay (0), Tremolo (1), but
+no Vibrato (0), and we want the waveform to be a Sine wave (00).
+We haven't descided how to use the last three bits (111).
+
 
 <h1>Answers:</h1>
-<h2>Answers to Binary Encoding </h2>
+<h2>Answers to Binary Encoding Questions</h2>
 <ol>
 <li>5 bits for Baskin Robbin's 31 flavors</li>
 <li>5 bits for Howard Johnson's 28 flavors</li>
