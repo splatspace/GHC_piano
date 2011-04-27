@@ -81,7 +81,7 @@ volatile byte icnt1;             // var inside interrupt
 volatile byte c4ms;              // counter incremented all 4ms
 
 byte k;
-byte mix;
+unsigned long mix;
 unsigned long divx;
 
 volatile unsigned long phaccu[12];   // phase accumulators
@@ -118,6 +118,20 @@ void setup()
 
   delay(300);
   printParameters(getValue());
+  /*
+   * We fill the RAM attack and decay tables from the 
+   * ROM fast/slow-attack/decay tables selected by the
+   * pattern seen by the device when it powers up. The
+   * first three bits select
+   * The binary black/white pattern appears in the "notes" 
+   * array, but just this once (on start up), we interpret
+   * the bits as a 12-bit programming word. One bit for
+   * the fast(default) or slow attack and one bit for the
+   * fast(default) or slow decay.
+   *
+   * The printParameters() routine documents the interpretation
+   * of the twelve inputs.
+   */
   for(i=0;i<16;i++)
     {
       if ( notes[PARAM_SLOW_ATTACK]) { attack[i]=slow_attack[i];   }
@@ -160,21 +174,31 @@ byte i;
      return value;
 }
 
+/*
+ * With the GHC_Piano device positioned over the
+ * programming pattern, start the Serial monitor
+ * this will restart the Arduino and therefore
+ * execute the setup code which reads and then
+ * interprets the black/white pattern it sees 
+ * as a set of programming parameters for scale,
+ * waveform, attack, decay, tremolo, vibrato.
+ */
+
 void printParameters(int p)
 {
-if ((p&3)==0) Serial.print("Major key ");
-if ((p&3)==1) Serial.print("minor key ");
-if ((p&3)==2) Serial.print("Harmonic minor ");
-if ((p&3)==3) Serial.print("Melodic minor ");
-if ((p>>2)&1) Serial.print("slow attack ");
-else Serial.print("fast attack ");
-if ((p>>3)&1) Serial.print("slow decay ");
-else Serial.print("fast decay ");
-if ((p>>4)&1) Serial.print("vibrato ");
-if ((p>>5)&1) Serial.print("tremolo ");
-Serial.println("");
-
+  if ((p&3)==0) Serial.print("Major key ");
+  if ((p&3)==1) Serial.print("minor key ");
+  if ((p&3)==2) Serial.print("Harmonic minor ");
+  if ((p&3)==3) Serial.print("Melodic minor ");
+  if ((p>>2)&1) Serial.print("slow attack ");
+  else Serial.print("fast attack ");
+  if ((p>>3)&1) Serial.print("slow decay ");
+  else Serial.print("fast decay ");
+  if ((p>>4)&1) Serial.print("vibrato ");
+  if ((p>>5)&1) Serial.print("tremolo ");
+  Serial.println("");
 }
+
 void displayNotes()
 {
 byte i;
@@ -191,7 +215,7 @@ void loop()
   byte change;
   byte i;
   while(1) {
-     if (c4ms > 80) {                 // timer / wait a full second
+     if (c4ms > 50) {                 // timer / wait a full second
       c4ms=0;
       getValue();
 
@@ -247,23 +271,109 @@ void Setup_timer2()
 // this is the timebase REFCLOCK for the DDS generator
 // FOUT = (M (REFCLK)) / (2 exp 32)
 // runtime : 8 microseconds ( inclusive push and pop)
+// (Peter has added a lot of code, we have no idea
+// how many instructions we're executing now, but 
+//
+// We can't spend more than 31 microseconds in this
+// (four times more code than Martin Nawrath had originally)
+// routine without slowing down the sample rate (32kHz)
+//
 
 ISR(TIMER2_OVF_vect)
 {
+  divx = 1;
+  /*
+   * divx was called div, but there is some kind of
+   * weird arduino built-in that got broken! It is 
+   * the value we need to divide by when we add more
+   * than one note (data from the sine table) and must
+   * scale it down to avoid distortion.
+   */
+
   mix = 0;
-  for (k=0; k<12; k++)
+  /*
+   * mix is the accumulator for the amplitude of the combined
+   * sine waves at this instant.
+   */
+
+  /*
+   * We've got no business looking at all twelve notes since
+   * we're not going to play more than four at once, so 
+   * we should have a four element structure here and just
+   * see what four (or less) notes are playing.
+   *  Ben? 
+   */
+
+  for (k=0; k<12; k++)   // For each of the twelve notes
     {
-      if (notes[k])
+      if (notes[k])   // This note is playing 
 	{
 	     phaccu[k] = phaccu[k] + tword_m[k];
 	     icnt = phaccu[k] >> 24;
-	     mix += pgm_read_byte_near(sine256 + icnt);
+	     mix += pgm_read_byte_near(sine256 + icnt); // << attack[env[k]];
+	    // if (env[k]>1) { divx += env[k]; }
+              divx++;
+	     if (env[k]) { env[k]--; } // Don't decrement below zero
 	}
+       /* Look below for a version with an "else" here.
+        * this "else" is for the decay of a note that is
+        * no longer playing. But then, this code would be
+        * executed for all the notes that aren't playing
+        * whether they are really decaying from previous 
+        * playing or not.
+        * But this would be okay because their "envelope" value
+        * would point at the zeroth element of the decay 
+        * table which would effectively drive it to zero.
+        */
     }
-    OCR2A = mix;
+    /*
+     * I'm struggling with finding the right value of divx
+     * It can't be zero because we want to divide by it, so I
+     * set it to 1 when I started, but now it has been increased
+     * for each "additional" note. But that means that a single
+     * note has incremented it to 2, so we adjust it down by one
+     * while making sure we don't reduce it to zero.
+     */
+    if (divx > 1) divx--;
+
+    /*
+     * You can print debug info from inside an interrupt routine,
+     * if you really want to see what is going on, but it has no
+     * chance of creating any sound that makes much sense.
+     *
+     * So, once the data looks right, you must comment out
+     * the print statements to listen to the real thing.
+     */
 /*
-  divx = 1;
-  for (k=0; k<1; k++)
+ 
+    Serial.print("divider ");
+    Serial.print(divx);
+    Serial.print(" mix ");
+    Serial.print(mix);
+    Serial.print(" b ");
+    Serial.println((int)b);
+*/
+    byte b = mix/divx;
+    OCR2A = b;
+
+/*  The version below (which doesn't work yet) attempts to scale up notes
+ * via the attack table and scale down with the decay table
+ * by indexing along with the envelope value.
+ * To start a note, set the envelope value at 15.
+ * As the note begins, it will grab the attack value from attack[15]
+ * and use this to shift the value up (louder) according to the 
+ * values in the attack array -- the interrupt routine will decrement
+ * the envelope pointer for this note from 15 down to zero on
+ * some reasonable schedule -- not every interrupt but maybe every 
+ * forth interrupt.
+ * When the note is not longer playing (note[n] zero) we set the
+ * envelope counter to 15 again, and this time it decrements through
+ * the decay array.  Shifting right this time to diminish the volume.
+ */
+
+/*
+
+  for (k=0; k<12; k++)
     {
       phaccu[k] = phaccu[k] + tword_m[k]; // soft DDS, 32-bit phase info
       icnt = phaccu[k] >> 24;             // upper 8 bits of  phase 
@@ -271,20 +381,34 @@ ISR(TIMER2_OVF_vect)
       // read value from ROM sine table and scale
       if (notes[k])
 	{
-	  mix += pgm_read_byte_near(sine256 + icnt); // << attack[env[k]];
+	  mix += pgm_read_byte_near(sine256 + icnt) << attack[env[k]];
 	  if (env[k]>1) { divx += env[k]; }
 	}
 	else
 	{
-	  mix += pgm_read_byte_near(sine256 + icnt); // >> decay[env[k]];
+	  mix += pgm_read_byte_near(sine256 + icnt) >> decay[env[k]];
 	  if (decay[env[k]]<2) { divx++; }
 	}
 	if (env[k]) { env[k]--; } // Don't decrement below zero
 	notes = notes>>1;
     }
     mix = pgm_read_byte_near(sine256 + icnt);
-    OCR2A = mix; // divx;      // send scaled value to PWM DAC
+    OCR2A = mix/divx;      // send scaled value to PWM DAC
+    
 */   
+
+/* NOTE:
+ *        OCR2A = mix/divx;  // doesn't seem to work
+ *
+ *  but
+ *
+ *        byte b = mix/divx;
+ *        OCR2A = b;
+ *
+ * Does work. So watch out for data types and alignment?
+ *
+ */
+
     if( icnt1++ == 80)   // (was 125) increment variable c4ms all 4ms?
       {
 	c4ms++;
