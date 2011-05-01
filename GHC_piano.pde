@@ -11,6 +11,16 @@
 
 // 256 element flash memory array of one sinewave cycle
 
+/*
+ * These numbers are multipliers (shift amounts)
+ * to control dynamics.
+ */
+
+PROGMEM prog_uchar fast_attack[] = {  0,1,1,1,1,2,2,2,2,3,3,3,4,4,2,1 };
+PROGMEM prog_uchar slow_attack[] = {  0,1,1,2,2,3,3,3,3,3,2,2,2,1,1,1 };
+PROGMEM prog_uchar fast_decay[]  = {  7,7,7,7,6,6,5,5,4,4,3,3,2,2,1,1 };
+PROGMEM prog_uchar slow_decay[]  = {  7,6,6,5,5,5,4,4,4,3,3,3,2,2,1,1 };
+
 PROGMEM  prog_uchar sine256[]  = {
   127,130,133,136,139,143,146,149, 152,155,158,161,164,167,170,173, //      \
   176,178,181,184,187,190,192,195, 198,200,203,205,208,210,212,215, //       \
@@ -30,21 +40,12 @@ PROGMEM  prog_uchar sine256[]  = {
    78, 81, 84, 87, 90, 93, 96, 99, 102,105,108,111,115,118,121,124  //
 };
 
-/*
- * These numbers are multipliers (shift amounts)
- * to control dynamics.
- */
-
-PROGMEM  prog_uchar fast_attack[] = {  0,1,1,1,1,2,2,2,2,3,3,3,4,4,2,1 };
-PROGMEM  prog_uchar slow_attack[] = {  0,1,1,2,2,3,3,3,3,3,2,2,2,1,1,1 };
-PROGMEM  prog_uchar fast_decay[]  = {  7,7,7,7,6,6,5,5,4,4,3,3,2,2,1,1 };
-PROGMEM  prog_uchar slow_decay[]  = {  7,6,6,5,5,5,4,4,4,3,3,3,2,2,1,1 };
-
-byte attack[16];
-byte decay[16];
 
 #define  ENV 15
-int env[] = {  0,0,0,0,0,0,0,0,0,0,0,0,0 };
+byte env[]    = {  0,0,0,0,0,0,0,0,0,0,0,0,0 };
+byte attack[] = {  0,0,0,0,0,0,0,0,0,0,0,0,0 };
+byte decay[]  = {  0,0,0,0,0,0,0,0,0,0,0,0,0 };
+
 
 
 // The following two tables map Input pins to corresponding musical notes.
@@ -82,7 +83,7 @@ volatile byte c4ms;              // counter incremented all 4ms
 
 byte k;
 unsigned long mix;
-unsigned long divx;
+volatile unsigned long isrdiv;
 
 volatile unsigned long phaccu[12];   // phase accumulators
 volatile unsigned long tword_m[12];  // dds tuning words m
@@ -109,8 +110,8 @@ void setup()
 
   // disable interrupts to avoid timing distortion
   // disable Timer0 !!! delay() is now not available
-  cbi (TIMSK0,TOIE0);  
 
+  cbi (TIMSK0,TOIE0);  
   for(i=0;i<12;i++)
   {
     tword_m[i] = pow(2,32)*freq[i]/refclk; // calulate DDS new tuning words
@@ -132,14 +133,16 @@ void setup()
    * The printParameters() routine documents the interpretation
    * of the twelve inputs.
    */
+  notes[PARAM_SLOW_ATTACK] = 1;
+  notes[PARAM_SLOW_DECAY] = 1;
   for(i=0;i<16;i++)
     {
-      if ( notes[PARAM_SLOW_ATTACK]) { attack[i]=slow_attack[i];   }
-      else                           { attack[i] = fast_attack[i]; }
-      if ( notes[PARAM_SLOW_DECAY])  { decay[i] = slow_decay[i];   }
-      else                           { decay[i] = fast_decay[i];   }
-    }
+      if ( notes[PARAM_SLOW_ATTACK]) { attack[i] = pgm_read_byte_near(slow_attack + i); }
+      else                           { attack[i] = pgm_read_byte_near(fast_attack + i); }
+      if ( notes[PARAM_SLOW_DECAY])  { decay[i] =  pgm_read_byte_near(slow_decay  + i); }
+      else                           { decay[i] =  pgm_read_byte_near(fast_decay  + i); }
 
+   }
   sbi (TIMSK2,TOIE2);              // enable Timer2 Interrupt
 }
 
@@ -147,12 +150,15 @@ unsigned int getValue()
 {
 int value = 0;
 byte i;
+unsigned int divx = 0;
+      Serial.print("v");
       for (i=0; i<10; i++)
       {
         if (digitalRead(note[i]))
         {
 		value = value | (1<<i);
 		notes[i] = 1;
+                divx++;
         }
 	else
 	{
@@ -165,13 +171,66 @@ byte i;
         {
 		value = value | (1<<i);
 		notes[i] = 1;
+                divx++;
         }
 	else
 	{
 		notes[i] = 0;
 	}
       }
-     return value;
+    /*
+     * I'm struggling with finding the right value of divx
+     * It can't be zero because we want to divide by it, so I
+     * set it to 1 when I started, but now it has been increased
+     * for each "additional" note. But that means that a single
+     * note has incremented it to 2, so we adjust it down by one
+     * while making sure we don't reduce it to zero.
+     */
+    if (divx != isrdiv) { isrdiv = divx; }
+    return value;
+}
+unsigned int getValue2()
+{
+int value = 0;
+byte i;
+unsigned int divx = 0;
+      Serial.print("v");
+      for (i=0; i<10; i++)
+      {
+        if (digitalRead(note[i]))
+        {
+		value = value | (1<<i);
+		notes[i] = 0;
+        }
+	else
+	{
+		notes[i] = 1;
+                divx++;
+	}
+      }
+     for (i=10; i<12; i++)
+      {
+        if (analogRead(note[i]) > 200)
+        {
+		value = value | (1<<i);
+		notes[i] = 0;
+        }
+	else
+	{
+		notes[i] = 1;
+                divx++;
+	}
+      }
+    /*
+     * I'm struggling with finding the right value of divx
+     * It can't be zero because we want to divide by it, so I
+     * set it to 1 when I started, but now it has been increased
+     * for each "additional" note. But that means that a single
+     * note has incremented it to 2, so we adjust it down by one
+     * while making sure we don't reduce it to zero.
+     */
+    if (divx != isrdiv) { isrdiv = divx; }
+    return value;
 }
 
 /*
@@ -213,7 +272,7 @@ byte i;
 void loop()
 {
   byte change;
-  byte i;
+  int i;
   while(1) {
      if (c4ms > 50) {                 // timer / wait a full second
       c4ms=0;
@@ -231,14 +290,19 @@ void loop()
 			change = 1;
 			previous[i] = notes[i];
 		}
+	    if (env[i]) { // Don't decrement below zero
+		 env[i]--;
+		Serial.println("env ");
+		Serial.println((int)env[i]);
+	    }
 	}
-
       if (change)
       {
         displayNotes();
 //      cbi (TIMSK2,TOIE2);              // disble Timer2 Interrupt
 //      sbi (TIMSK2,TOIE2);              // enable Timer2 Interrupt 
       }
+       
     }
   }
  }
@@ -281,16 +345,21 @@ void Setup_timer2()
 
 ISR(TIMER2_OVF_vect)
 {
-  divx = 1;
+byte b;
   /*
-   * divx was called div, but there is some kind of
-   * weird arduino built-in that got broken! It is 
-   * the value we need to divide by when we add more
-   * than one note (data from the sine table) and must
-   * scale it down to avoid distortion.
+   * isrdiv is the interrupt routines version of the divide-by
+   * scaling factor. It is the value we need to divide by when
+   * we add more than one note (data from the sine table) and
+   * must scale it down to avoid distortion.
+   *
+   * If isrdiv is zero, no notes playing so let's get out of
+   * here before we do something stupid (like divide by zero).
    */
+  if (isrdiv)
+  {
 
   mix = 0;
+
   /*
    * mix is the accumulator for the amplitude of the combined
    * sine waves at this instant.
@@ -298,22 +367,25 @@ ISR(TIMER2_OVF_vect)
 
   /*
    * We've got no business looking at all twelve notes since
-   * we're not going to play more than four at once, so 
-   * we should have a four element structure here and just
+   * we're not going to play more than divx (four?) at once,
+   * so we should have a four element structure here and just
    * see what four (or less) notes are playing.
-   *  Ben? 
    */
 
   for (k=0; k<12; k++)   // For each of the twelve notes
     {
+      phaccu[k] = phaccu[k] + tword_m[k];
+      icnt = phaccu[k] >> 24;
       if (notes[k])   // This note is playing 
 	{
-	     phaccu[k] = phaccu[k] + tword_m[k];
-	     icnt = phaccu[k] >> 24;
-	     mix += pgm_read_byte_near(sine256 + icnt); // << attack[env[k]];
-	    // if (env[k]>1) { divx += env[k]; }
-              divx++;
-	     if (env[k]) { env[k]--; } // Don't decrement below zero
+	     b = attack[env[k]];
+	     mix += pgm_read_byte_near(sine256 + icnt) << b;
+             b = b>>2;
+             isrdiv += b;
+	}
+	else
+	{
+//	     mix += pgm_read_byte_near(sine256 + icnt) >> 7;
 	}
        /* Look below for a version with an "else" here.
         * this "else" is for the decay of a note that is
@@ -326,15 +398,6 @@ ISR(TIMER2_OVF_vect)
         * table which would effectively drive it to zero.
         */
     }
-    /*
-     * I'm struggling with finding the right value of divx
-     * It can't be zero because we want to divide by it, so I
-     * set it to 1 when I started, but now it has been increased
-     * for each "additional" note. But that means that a single
-     * note has incremented it to 2, so we adjust it down by one
-     * while making sure we don't reduce it to zero.
-     */
-    if (divx > 1) divx--;
 
     /*
      * You can print debug info from inside an interrupt routine,
@@ -346,15 +409,14 @@ ISR(TIMER2_OVF_vect)
      */
 /*
  
-    Serial.print("divider ");
-    Serial.print(divx);
     Serial.print(" mix ");
     Serial.print(mix);
     Serial.print(" b ");
     Serial.println((int)b);
 */
-    byte b = mix/divx;
+    byte b = mix/isrdiv;
     OCR2A = b;
+  } // if (isrdiv)
 
 /*  The version below (which doesn't work yet) attempts to scale up notes
  * via the attack table and scale down with the decay table
