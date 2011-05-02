@@ -65,8 +65,6 @@ double freq[] = {
 #define cbi(sfr, bit) (_SFR_BYTE(sfr) &= ~_BV(bit))
 #define sbi(sfr, bit) (_SFR_BYTE(sfr) |= _BV(bit))
 
-byte bb;
-
 double dfreq[5] = { 220.0, 276.0, 328.0, 414.0, 0.0}; // Maj7th chord
 
 byte notes[12];
@@ -74,6 +72,7 @@ byte previous[12];
 
 // const double refclk=31372.549;  // =16MHz / 510
 const double refclk=31376.6;      // measured
+//const double refclk=28376.6;      // measured
 
 // Variables used inside interrupt service declared as volatile
 
@@ -91,7 +90,7 @@ volatile unsigned long tword_m[12];  // dds tuning words m
 // Table of input pin assignments:
 //  The first ten are digital Inputs, skipping over 11
 //  The last two, note[10-11] are analog inputs
-int    note[] = { 2,3,4,5,6,7,8,9,10,12,0,1 };
+int    note[] = { 0,1,2,3,4,5,8,9,10,11,12,13 };
 
 void setup()
 {
@@ -100,7 +99,7 @@ void setup()
   Serial.begin(115200);       // connect to the serial port
   Serial.println("GHC");
 
-  for(i=0;i<10;i++)
+  for(i=6;i<12;i++)
   {
 	pinMode(note[i], INPUT);
 	digitalWrite(note[i], HIGH);
@@ -151,21 +150,8 @@ unsigned int getValue()
 int value = 0;
 byte i;
 unsigned int divx = 0;
-      Serial.print("v");
-      for (i=0; i<10; i++)
-      {
-        if (digitalRead(note[i]))
-        {
-		value = value | (1<<i);
-		notes[i] = 1;
-                divx++;
-        }
-	else
-	{
-		notes[i] = 0;
-	}
-      }
-     for (i=10; i<12; i++)
+
+     for (i=0; i<6; i++)
       {
         if (analogRead(note[i]) > 200)
         {
@@ -178,47 +164,17 @@ unsigned int divx = 0;
 		notes[i] = 0;
 	}
       }
-    /*
-     * I'm struggling with finding the right value of divx
-     * It can't be zero because we want to divide by it, so I
-     * set it to 1 when I started, but now it has been increased
-     * for each "additional" note. But that means that a single
-     * note has incremented it to 2, so we adjust it down by one
-     * while making sure we don't reduce it to zero.
-     */
-    if (divx != isrdiv) { isrdiv = divx; }
-    return value;
-}
-unsigned int getValue2()
-{
-int value = 0;
-byte i;
-unsigned int divx = 0;
-      Serial.print("v");
-      for (i=0; i<10; i++)
+      for (i=6; i<12; i++)
       {
         if (digitalRead(note[i]))
         {
 		value = value | (1<<i);
-		notes[i] = 0;
+		notes[i] = 1;
+                divx++;
         }
 	else
 	{
-		notes[i] = 1;
-                divx++;
-	}
-      }
-     for (i=10; i<12; i++)
-      {
-        if (analogRead(note[i]) > 200)
-        {
-		value = value | (1<<i);
 		notes[i] = 0;
-        }
-	else
-	{
-		notes[i] = 1;
-                divx++;
 	}
       }
     /*
@@ -337,7 +293,6 @@ void Setup_timer2()
 // runtime : 8 microseconds ( inclusive push and pop)
 // (Peter has added a lot of code, we have no idea
 // how many instructions we're executing now, but 
-//
 // We can't spend more than 31 microseconds in this
 // (four times more code than Martin Nawrath had originally)
 // routine without slowing down the sample rate (32kHz)
@@ -378,10 +333,11 @@ byte b;
       icnt = phaccu[k] >> 24;
       if (notes[k])   // This note is playing 
 	{
-	     b = attack[env[k]];
-	     mix += pgm_read_byte_near(sine256 + icnt) << b;
-             b = b>>2;
-             isrdiv += b;
+//	     b = attack[env[k]];
+	     b = pgm_read_byte_near(sine256 + icnt)>>1; // << b;
+             break;
+//             b = b>>2;
+//             isrdiv += b;
 	}
 	else
 	{
@@ -414,11 +370,17 @@ byte b;
     Serial.print(" b ");
     Serial.println((int)b);
 */
-    byte b = mix/isrdiv;
+//    byte b = mix/isrdiv;
+
+//    byte b = mix;
     OCR2A = b;
   } // if (isrdiv)
-
-/*  The version below (which doesn't work yet) attempts to scale up notes
+    if( icnt1++ == 80)   // (was 125) increment variable c4ms all 4ms?
+      {
+	c4ms++;
+	icnt1=0;
+      }
+/* We're attempting to scale up notes
  * via the attack table and scale down with the decay table
  * by indexing along with the envelope value.
  * To start a note, set the envelope value at 15.
@@ -432,48 +394,4 @@ byte b;
  * envelope counter to 15 again, and this time it decrements through
  * the decay array.  Shifting right this time to diminish the volume.
  */
-
-/*
-
-  for (k=0; k<12; k++)
-    {
-      phaccu[k] = phaccu[k] + tword_m[k]; // soft DDS, 32-bit phase info
-      icnt = phaccu[k] >> 24;             // upper 8 bits of  phase 
-
-      // read value from ROM sine table and scale
-      if (notes[k])
-	{
-	  mix += pgm_read_byte_near(sine256 + icnt) << attack[env[k]];
-	  if (env[k]>1) { divx += env[k]; }
-	}
-	else
-	{
-	  mix += pgm_read_byte_near(sine256 + icnt) >> decay[env[k]];
-	  if (decay[env[k]]<2) { divx++; }
-	}
-	if (env[k]) { env[k]--; } // Don't decrement below zero
-	notes = notes>>1;
-    }
-    mix = pgm_read_byte_near(sine256 + icnt);
-    OCR2A = mix/divx;      // send scaled value to PWM DAC
-    
-*/   
-
-/* NOTE:
- *        OCR2A = mix/divx;  // doesn't seem to work
- *
- *  but
- *
- *        byte b = mix/divx;
- *        OCR2A = b;
- *
- * Does work. So watch out for data types and alignment?
- *
- */
-
-    if( icnt1++ == 80)   // (was 125) increment variable c4ms all 4ms?
-      {
-	c4ms++;
-	icnt1=0;
-      }
 }
