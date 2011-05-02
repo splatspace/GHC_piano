@@ -10,17 +10,6 @@
 #define PARAM_SLOW_DECAY   4
 
 // 256 element flash memory array of one sinewave cycle
-
-/*
- * These numbers are multipliers (shift amounts)
- * to control dynamics.
- */
-
-PROGMEM prog_uchar fast_attack[] = {  0,1,1,1,1,2,2,2,2,3,3,3,4,4,2,1 };
-PROGMEM prog_uchar slow_attack[] = {  0,1,1,2,2,3,3,3,3,3,2,2,2,1,1,1 };
-PROGMEM prog_uchar fast_decay[]  = {  7,7,7,7,6,6,5,5,4,4,3,3,2,2,1,1 };
-PROGMEM prog_uchar slow_decay[]  = {  7,6,6,5,5,5,4,4,4,3,3,3,2,2,1,1 };
-
 PROGMEM  prog_uchar sine256[]  = {
   127,130,133,136,139,143,146,149, 152,155,158,161,164,167,170,173, //      \
   176,178,181,184,187,190,192,195, 198,200,203,205,208,210,212,215, //       \
@@ -40,12 +29,21 @@ PROGMEM  prog_uchar sine256[]  = {
    78, 81, 84, 87, 90, 93, 96, 99, 102,105,108,111,115,118,121,124  //
 };
 
+/*
+ * These numbers are multipliers (shift amounts)
+ * to control dynamics.
+ */
+
+PROGMEM  prog_uchar fast_attack[] = {  0,0,1,1,1,1,1,1,1,1,2,2,2,2,1,0 };
+PROGMEM  prog_uchar slow_attack[] = {  0,1,1,2,2,2,2,2,2,1,1,1,1,0,0,0 };
+PROGMEM  prog_uchar fast_decay[]  = {  7,7,7,7,6,6,5,5,4,4,3,3,2,2,1,1 };
+PROGMEM  prog_uchar slow_decay[]  = {  7,6,6,5,5,5,4,4,4,3,2,2,2,1,1,1 };
+
+byte attack[16];
+byte decay[16];
 
 #define  ENV 15
 byte env[]    = {  0,0,0,0,0,0,0,0,0,0,0,0,0 };
-byte attack[] = {  0,0,0,0,0,0,0,0,0,0,0,0,0 };
-byte decay[]  = {  0,0,0,0,0,0,0,0,0,0,0,0,0 };
-
 
 
 // The following two tables map Input pins to corresponding musical notes.
@@ -241,10 +239,26 @@ void loop()
       change = 0;
       for(i=0;i<12;i++)
 	{
+            // All envelopes progress toward index = 0
+            if (env[i]) { env[i]--; } // Don't decrement below zero
+
 	    if (notes[i] != previous[i]) 
 		{
 			change = 1;
 			previous[i] = notes[i];
+			env[i] = ENV; // Start the Envelope (attack or decay)
+
+/*
+			if (notes[i])  // NOTE ON
+			{
+
+			}
+			else           // NOTE OFF
+			{
+
+			}
+*/
+
 		}
 	    if (env[i]) { // Don't decrement below zero
 		 env[i]--;
@@ -310,6 +324,14 @@ byte b;
    * If isrdiv is zero, no notes playing so let's get out of
    * here before we do something stupid (like divide by zero).
    */
+
+  /*
+   * isrdiv is the local copy of (changed when interrupt is disabled)
+   * It is the value we need to divide by when we add more
+   * than one note (data from the sine table) and must
+   * scale it down to avoid distortion.
+   */
+
   if (isrdiv)
   {
 
@@ -343,55 +365,55 @@ byte b;
 	{
 //	     mix += pgm_read_byte_near(sine256 + icnt) >> 7;
 	}
-       /* Look below for a version with an "else" here.
-        * this "else" is for the decay of a note that is
-        * no longer playing. But then, this code would be
+
+       /* This "else" is for the decay of a note that is
+        * no longer playing. So this code will be
         * executed for all the notes that aren't playing
-        * whether they are really decaying from previous 
-        * playing or not.
-        * But this would be okay because their "envelope" value
-        * would point at the zeroth element of the decay 
-        * table which would effectively drive it to zero.
+        * whether they are really decaying from previous
+        * playing or not.  For all those notes that aren't
+        * really playing, the "envelope" index is pointing
+        * to the zeroth element of the decay table which
+        * effectively drives any value to zero (and is too
+        * large to increase the divsor (divx) above).
         */
     }
 
     /*
      * You can print debug info from inside an interrupt routine,
      * if you really want to see what is going on, but it has no
-     * chance of creating any sound that makes much sense.
+     * chance of creating any sound that makes much sense. In other
+     * words you will see the data printed out, but it won't
+     * function correctly in terms of the timing -- which is what
+     * Direct Digital Synthesis is all about.
      *
      * So, once the data looks right, you must comment out
-     * the print statements to listen to the real thing.
+     * all print statements to listen to the real thing.
      */
-/*
- 
-    Serial.print(" mix ");
-    Serial.print(mix);
-    Serial.print(" b ");
-    Serial.println((int)b);
-*/
-//    byte b = mix/isrdiv;
 
-//    byte b = mix;
+//    byte b = mix/isrdiv;
     OCR2A = b;
   } // if (isrdiv)
+
     if( icnt1++ == 80)   // (was 125) increment variable c4ms all 4ms?
       {
 	c4ms++;
 	icnt1=0;
       }
-/* We're attempting to scale up notes
+
+/*  The version below (which doesn't work yet) attempts to scale up notes
  * via the attack table and scale down with the decay table
  * by indexing along with the envelope value.
  * To start a note, set the envelope value at 15.
  * As the note begins, it will grab the attack value from attack[15]
  * and use this to shift the value up (louder) according to the 
- * values in the attack array -- the interrupt routine will decrement
- * the envelope pointer for this note from 15 down to zero on
- * some reasonable schedule -- not every interrupt but maybe every 
- * forth interrupt.
- * When the note is not longer playing (note[n] zero) we set the
- * envelope counter to 15 again, and this time it decrements through
- * the decay array.  Shifting right this time to diminish the volume.
+ * values in the attack array -- the main routine decrements
+ * the envelope pointer for this note from 15 down to zero in its
+ * main loop.
+ *
+ * When the note is not longer playing ( note[n] == 0 ) we set the
+ * envelope counter to 15 again, but this time it decrements through
+ * the decay array.  Shifting to the right this time to diminish
+ * the volume.  The final envelope index (0) will always point to
+ * a (right)shift value of seven which extinquishes the note.
  */
 }
