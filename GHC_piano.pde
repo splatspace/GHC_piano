@@ -82,6 +82,10 @@ void setup()
 	pinMode(note[i], INPUT);
 	digitalWrite(note[i], HIGH);
   }
+  for(i=0;i<2;i++)
+  {
+	busy[i] = 255;
+  }
   delay(300);
   int prog = getValue();
   printParameters(prog);
@@ -187,6 +191,14 @@ byte i;
 	Serial.println("");
 }
 
+void silence()
+{
+ for(byte j=0;j<2;j++)
+ {
+	notePlayer[j].stop();
+ }
+}
+
 int noteChange()
 {
   byte change;
@@ -212,16 +224,22 @@ int noteChange()
 					}
 					break;
 				}
+				else
+				{
+					Serial.println((int)busy[i]);
+				}
 			 }
 			}
 			else // Note just starting
 			{
-			 for(j=0;j<6;j++)
+			 for(j=0;j<2;j++)
 			 {
 				if (busy[j] == 255)
 				{	
 					notePlayer[j].play(ntes[i]);
 					busy[j] = i;
+					Serial.print("playing ");
+					Serial.println((int)i);
 					break;
 				}
 			 }
@@ -240,6 +258,27 @@ void loop()
   while(1)
   {
       getValue();
+
+	/*
+         * If more than seven notes are playing, we will
+         * be silent, assuming the device has been lifted
+         * from the reflective surface.  This does not
+         * apply to the programming word (which may have
+         * more than seven 1 bits) which is read during
+         * the setup phase.
+         */
+
+      j = 0;
+      for(i=0;i<12;i++)
+      {
+	if (notes[i]) j++;
+      }
+      if (j>7)
+      {
+	silence();
+	continue;
+      }
+
       change = 0;
       for(i=0;i<12;i++)
 	{
